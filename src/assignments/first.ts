@@ -49,24 +49,41 @@ type FetchAllEpisodesRequestAnswer = {
   results: Episode[]
 }
 
-type FetchCharacterRequestAnswer = {}
-
 export const BASE_URL = 'https://rickandmortyapi.com/api'
 
-const fetchAllEpisodes = async (): Promise<FetchAllEpisodesRequestAnswer> => {
+const fetchAllEpisodes = async (): Promise<Episode[]> => {
   try {
     const url = `${BASE_URL}/episode`
 
+    const firstPageData = await fetchEpisodes(url)
+
+    const allEpisodes = await Promise.all(
+      Array.from({ length: firstPageData.info.pages - 1 }).flatMap((_, idx) =>
+        fetchEpisodes(url + `?page=${idx + 2}`)
+      )
+    )
+
+    return firstPageData.results.concat(
+      allEpisodes.flatMap(({ results }) => results)
+    )
+  } catch (error) {
+    throw Error('Smth went wrong!')
+  }
+}
+
+const fetchEpisodes = async (
+  url: string
+): Promise<FetchAllEpisodesRequestAnswer> => {
+  try {
     const response = await fetch(url)
     const data = await response.json()
-
     return data
   } catch (error) {
     throw Error('Smth went wrong!')
   }
 }
 
-const fetchCharacter = async (url: string): Promise<Character> => {
+const fetchCharacters = async (url: string): Promise<Character[]> => {
   try {
     const response = await fetch(url)
     const data = await response.json()
@@ -79,16 +96,42 @@ const fetchCharacter = async (url: string): Promise<Character> => {
 const log = async () => {
   const episodes = await fetchAllEpisodes()
 
-  const charactersUrl = episodes.results.flatMap(
-    (episode) => episode.characters
-  )
+  const charactersUrl = episodes.flatMap((episode) => episode.characters)
 
   const uniqueCharactersUrls = new Set(charactersUrl)
+  const charactersIds = Array.from(uniqueCharactersUrls)
+    .map(getIdFromUrl)
+    .join(',')
 
-  const characters = await Promise.all(
-    Array.from(uniqueCharactersUrls).map((url) => fetchCharacter(url))
+  const characters = await fetchCharacters(
+    `${BASE_URL}/character/${charactersIds}`
   )
-  console.log(characters)
+
+  const charactersDict = characters.reduce<Record<number, Character>>(
+    (acc, next) => {
+      acc[next.id] = next
+      return acc
+    },
+    {}
+  )
+
+  const result = episodes.map((episode) => {
+    const characters = episode.characters.map((characterUrl) => {
+      const characterId = getIdFromUrl(characterUrl)
+      return charactersDict[+characterId]
+    })
+
+    return { ...episode, characters }
+  })
+
+  console.log(result)
 }
 
 log()
+
+function getIdFromUrl(url: string) {
+  const matched = url.match(/\d+/g)
+  if (matched) return matched[0]
+
+  return ''
+}
